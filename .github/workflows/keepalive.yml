@@ -1,0 +1,19 @@
+name: Keepalive
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"   # primo giorno del mese alle 09:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Attivita' anti-disattivazione 60 giorni
+        run: |
+          echo "Run di manutenzione: mantiene attive le catene del repo evitando la disattivazione automatica dopo 60 giorni di inattivita'."
+          curl -s -o /dev/null -w "%{http_code}\n" \
+            -H "Authorization: token ${{ secrets.SELF_TRIGGER_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/keepalive.yml/dispatches" \
+            -d '{"ref":"main"}'
