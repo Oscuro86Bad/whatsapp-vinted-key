@@ -1,0 +1,59 @@
+name: WhatsApp Watchdog
+
+# Rete di sicurezza: se la catena wa-multi e' ferma (run fallito con
+# startup_failure, run appeso, dispatch perso), la riattiva entro ~15-45 min.
+# La catena normale resta il loop self-dispatch di wa-multi.yml.
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"   # ogni 15 min, minuti sfalsati
+  workflow_dispatch: {}
+
+concurrency:
+  group: wa-watchdog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Riattiva wa-multi se ferma
+        env:
+          TRIGGER_TOKEN: ${{ secrets.SELF_TRIGGER_TOKEN }}
+        run: |
+          curl -s -H "Authorization: token $TRIGGER_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/wa-multi.yml/runs?per_page=1" \
+            > last-run.json
+          python3 - <<'EOF'
+          import json, os, urllib.request, urllib.error, datetime
+
+          with open("last-run.json") as f:
+              runs = json.load(f).get("workflow_runs", [])
+          now = datetime.datetime.now(datetime.timezone.utc)
+          stalled = True
+          reason = "nessun run presente"
+          if runs:
+              r = runs[0]
+              created = datetime.datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+              age = (now - created).total_seconds()
+              st = r["status"]
+              if st in ("in_progress", "queued", "waiting") and age < 900:
+                  stalled = False; reason = "run %s in corso da %ds" % (r["id"], age)
+              elif st == "completed" and age < 600:
+                  stalled = False; reason = "run %s completato %ds fa (dispatch in arrivo)" % (r["id"], age)
+              else:
+                  reason = "run %s: %s/%s creato %ds fa" % (r["id"], st, r.get("conclusion"), age)
+          print("Stato catena: " + reason)
+          if stalled:
+              req = urllib.request.Request(
+                  "https://api.github.com/repos/%s/actions/workflows/wa-multi.yml/dispatches" % os.environ["GITHUB_REPOSITORY"],
+                  data=b'{"ref":"main"}',
+                  headers={"Authorization": "token " + os.environ["TRIGGER_TOKEN"],
+                           "Accept": "application/vnd.github+json"})
+              urllib.request.urlopen(req)
+              print("Catena ferma: RIATTIVATA con nuovo dispatch.")
+          else:
+              print("Catena viva: nessun intervento.")
+          EOF
