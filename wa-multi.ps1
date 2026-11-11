@@ -148,18 +148,24 @@ foreach ($dev in $devices) {
                     # CLAIM ANTICIPATO anti-doppio
                     $known = @($known) + @($news)
                     $dirty = $true
-                }
-                foreach ($id in $news) {
-                    $it = $foundItems[$id]
-                    $msg = "*Nuovo annuncio Vinted* ($term): $($it.title)`nPrezzo: $($it.price) euro`nhttps://www.vinted.it/items/$id"
+                    # UN SOLO messaggio per termine (CallMeBot gratuito limita i messaggi ravvicinati):
+                    # elenco fino a 5 annunci + "+N altri"
+                    $msg = "*Nuovi annunci Vinted* ($term): $($news.Count) novita'"
+                    $mostra = @($news | Select-Object -First 5)
+                    foreach ($id in $mostra) {
+                        $it = $foundItems[$id]
+                        $msg += "`n- $($it.title) - $($it.price) euro`nhttps://www.vinted.it/items/$id"
+                    }
+                    if ($news.Count -gt $mostra.Count) { $msg += "`n+ altri $($news.Count - $mostra.Count) annunci nuovi" }
                     $sent = Send-WhatsApp -Phone $cfg.phone -Apikey $cfg.apikey -Text $msg
                     if ($sent) {
-                        Write-Log "Notificato $id a '$label' ($term)"
+                        Write-Log "Notificati $($news.Count) annunci a '$label' ($term) in un messaggio."
+                        Start-Sleep -Seconds 4   # distacco tra messaggi CallMeBot
                     } else {
                         # invio fallito: rimuovi il claim per riprovarci al prossimo giro
-                        $known = @($known | Where-Object { $_ -ne $id })
+                        $known = @($known | Where-Object { $news -notcontains $_ })
                         $dirty = $true
-                        Write-Log "Invio FALLITO $id a '$label'"
+                        Write-Log "Invio FALLITO ($($news.Count) annunci) a '$label' ($term)"
                     }
                 }
             }
