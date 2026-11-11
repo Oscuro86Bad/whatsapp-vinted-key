@@ -76,6 +76,7 @@ foreach ($dev in $devices) {
         $statePath = "state/$($dev.name)"
         $known = @()
         $baselined = @()
+        $cooldownUntil = $null
         $stateSha = $null
         $fresh = $true
         try {
@@ -84,8 +85,15 @@ foreach ($dev in $devices) {
             $known = @($sj.obj.seenIds)
             $baselined = @($sj.obj.baselinedTerms)
             if (-not $baselined) { $baselined = @() }
+            if ($sj.obj.cooldownUntil) { $cooldownUntil = [datetime]$sj.obj.cooldownUntil }
             $fresh = $false
         } catch { }
+
+        # ---- cooldown CallMeBot: dopo un rifiuto aspetta, non martellare ----
+        if ($cooldownUntil -and $cooldownUntil -gt (Get-Date).ToUniversalTime()) {
+            Write-Log "Cooldown '$label' fino a $($cooldownUntil.ToString('u')) (limite CallMeBot): giro in sola lettura."
+            continue
+        }
 
         # ---- scansione Vinted per le ricerche del dispositivo ----
         $foundItems = @{}
@@ -160,12 +168,15 @@ foreach ($dev in $devices) {
                     $sent = Send-WhatsApp -Phone $cfg.phone -Apikey $cfg.apikey -Text $msg
                     if ($sent) {
                         Write-Log "Notificati $($news.Count) annunci a '$label' ($term) in un messaggio."
+                        $cooldownUntil = $null
                         Start-Sleep -Seconds 4   # distacco tra messaggi CallMeBot
                     } else {
-                        # invio fallito: rimuovi il claim per riprovarci al prossimo giro
+                        # invio fallito (spesso limite CallMeBot 48 msg/4h): cooldown 25 min,
+                        # gli annunci restano senza claim e si riprova dopo la pausa
                         $known = @($known | Where-Object { $news -notcontains $_ })
+                        $cooldownUntil = (Get-Date).ToUniversalTime().AddMinutes(25)
                         $dirty = $true
-                        Write-Log "Invio FALLITO ($($news.Count) annunci) a '$label' ($term)"
+                        Write-Log "Invio FALLITO ($($news.Count) annunci) a '$label' ($term): cooldown fino a $($cooldownUntil.ToString('u'))."
                     }
                 }
             }
@@ -175,6 +186,7 @@ foreach ($dev in $devices) {
         if ($dirty) {
             if ($known.Count -gt 800) { $known = @($known | Select-Object -Last 800) }
             $out = @{ seenIds = @($known); baselinedTerms = @($baselined) }
+            if ($cooldownUntil) { $out.cooldownUntil = $cooldownUntil.ToString("o") }
             GhPutJson -path $statePath -obj $out -sha $stateSha
             Write-Log "Stato '$label' salvato ($($known.Count) id)."
         }
